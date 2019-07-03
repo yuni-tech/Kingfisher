@@ -94,7 +94,7 @@ extension Kingfisher where Base: Image {
     }
     
     var scale: CGFloat {
-        return base.scale
+        return UIScreen.main.scale
     }
     
     var images: [Image]? {
