@@ -186,6 +186,7 @@ open class ImageCache {
     Store an image to cache. It will be saved to both memory and disk. It is an async operation.
     
     - parameter image:             The image to be stored.
+    - parameter blurImage:         The image change to be blur image and to be stored in memory cache.
     - parameter original:          The original data of the image.
                                    Kingfisher will use it to check the format of the image and optimize cache size on disk.
                                    If `nil` is supplied, the image data will be saved as a normalized PNG file.
@@ -198,6 +199,7 @@ open class ImageCache {
     - parameter completionHandler: Called when store operation completes.
     */
     open func store(_ image: Image,
+                      blurImage: Image? = nil,
                       original: Data? = nil,
                       forKey key: String,
                       processorIdentifier identifier: String = "",
@@ -207,7 +209,11 @@ open class ImageCache {
     {
         
         let computedKey = key.computedKey(with: identifier)
-        memoryCache.setObject(image, forKey: computedKey as NSString, cost: image.kf.imageCost)
+        if let blur = blurImage {
+            memoryCache.setObject(blur, forKey: computedKey as NSString, cost: blur.kf.imageCost)
+        } else {
+            memoryCache.setObject(image, forKey: computedKey as NSString, cost: image.kf.imageCost)
+        }
 
         func callHandlerInMainQueue() {
             if let handler = completionHandler {
@@ -323,28 +329,49 @@ open class ImageCache {
                         sSelf.processQueue.async {
 
                             let result = image.kf.decoded
+                            var blurImage: Image?
+                            
+                            // blur image
+                            if let radius = options.blurryRadius {
+                                let blur = BlurImageProcessor(blurRadius: radius)
+                                blurImage = blur.process(item: .image(result), options: options)
+                            }
                             
                             sSelf.store(result,
+                                        blurImage: blurImage,
                                         forKey: key,
                                         processorIdentifier: options.processor.identifier,
                                         cacheSerializer: options.cacheSerializer,
                                         toDisk: false,
                                         completionHandler: nil)
+                            
+                            let callbackImage = blurImage ?? result
                             options.callbackDispatchQueue.safeAsync {
-                                completionHandler(imageModifier.modify(result), .disk)
+                                completionHandler(imageModifier.modify(callbackImage), .disk)
                                 sSelf = nil
                             }
                         }
                     } else {
+                        var blurImage: Image?
+                        
+                        // blur image
+                        if let radius = options.blurryRadius {
+                            let blur = BlurImageProcessor(blurRadius: radius)
+                            blurImage = blur.process(item: .image(image), options: options)
+                        }
+                        
                         sSelf.store(image,
+                                    blurImage: blurImage,
                                     forKey: key,
                                     processorIdentifier: options.processor.identifier,
                                     cacheSerializer: options.cacheSerializer,
                                     toDisk: false,
                                     completionHandler: nil
                         )
+                        
+                        let callbackImage = blurImage ?? image
                         options.callbackDispatchQueue.safeAsync {
-                            completionHandler(imageModifier.modify(image), .disk)
+                            completionHandler(imageModifier.modify(callbackImage), .disk)
                             sSelf = nil
                         }
                     }

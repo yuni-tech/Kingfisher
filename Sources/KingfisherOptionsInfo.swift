@@ -131,6 +131,11 @@ public enum KingfisherOptionsInfoItem {
     /// of `Image`, such as a `UIImage`, that do not persist when caching the image.
     case imageModifier(ImageModifier)
     
+    /// Modifier for blur an image before callback.
+    /// If the radius is 0, that will not modify the image
+    /// Otherwise, will change the image before callback to other.
+    case blurry(CGFloat)
+    
     /// Keep the existing image while setting another image to an image view.
     /// By setting this option, the placeholder image parameter of imageview extension method
     /// will be ignored and the current image will be kept while loading or downloading the new image.
@@ -178,6 +183,7 @@ func <== (lhs: KingfisherOptionsInfoItem, rhs: KingfisherOptionsInfoItem) -> Boo
     case (.processor(_), .processor(_)): return true
     case (.cacheSerializer(_), .cacheSerializer(_)): return true
     case (.imageModifier(_), .imageModifier(_)): return true
+    case (.blurry(_), .blurry(_)): return true
     case (.keepCurrentImageWhileLoading, .keepCurrentImageWhileLoading): return true
     case (.onlyLoadFirstFrame, .onlyLoadFirstFrame): return true
     case (.cacheOriginalImage, .cacheOriginalImage): return true
@@ -316,6 +322,15 @@ public extension Collection where Iterator.Element == KingfisherOptionsInfoItem 
             return modifier
         }
         return NoModifier.default
+    }
+    
+    /// The radius which should be used for the blur image.
+    public var blurryRadius: CGFloat? {
+        if let item = lastMatchIgnoringAssociatedValue(.blurry(0)),
+            case .blurry(let radius) = item {
+            return radius
+        }
+        return nil
     }
     
     /// `ImageProcessor` for processing when the downloading finishes.
