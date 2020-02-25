@@ -46,12 +46,17 @@ public final class RetrieveImageTask {
     /// The network retrieve task in this image task.
     public var downloadTask: RetrieveImageDownloadTask?
     
+    /// The disk retrieve task in this image task.
+    public var diskTask: RetrieveImageDiskTask?
+    
     /**
     Cancel current task. If this task is already done, do nothing.
     */
     public func cancel() {
-        if let downloadTask = downloadTask {
+        if let downloadTask = self.downloadTask {
             downloadTask.cancel()
+        } else if let diskTask = self.diskTask {
+            diskTask.cancel()
         } else {
             cancelledBeforeDownloadStarting = true
         }
@@ -123,7 +128,7 @@ public class KingfisherManager {
         let task = RetrieveImageTask()
         let options = currentDefaultOptions + (options ?? KingfisherEmptyOptionsInfo)
         if options.forceRefresh {
-            _ = downloadAndCacheImage(
+            downloadAndCacheImage(
                 with: resource.downloadURL,
                 forKey: resource.cacheKey,
                 retrieveImageTask: task,
@@ -159,49 +164,69 @@ public class KingfisherManager {
             },
             completionHandler: { image, error, imageURL, originalData in
 
-                let targetCache = options.targetCache ?? self.cache
-                if let error = error, error.code == KingfisherError.notModified.rawValue {
-                    // Not modified. Try to find the image from cache.
-                    // (The image should be in cache. It should be guaranteed by the framework users.)
-                    targetCache.retrieveImage(forKey: key, options: options, completionHandler: { (cacheImage, cacheType) -> Void in
-                        completionHandler?(cacheImage, nil, cacheType, url)
-                    })
-                    return
+                let diskTaskCompletionHandler: CompletionHandler = { (image, error, cacheType, imageURL) -> Void in
+                    completionHandler?(image, error, cacheType, imageURL)
                 }
                 
-                if let image = image, let originalData = originalData {
-                    targetCache.store(image,
-                                      original: originalData,
-                                      forKey: key,
-                                      processorIdentifier:options.processor.identifier,
-                                      cacheSerializer: options.cacheSerializer,
-                                      toDisk: !options.cacheMemoryOnly,
-                                      completionHandler: {
-                                        guard options.waitForCache else { return }
-                                        
-                                        let cacheType = targetCache.imageCachedType(forKey: key, processorIdentifier: options.processor.identifier)
-                                        completionHandler?(image, nil, cacheType, url)
-                    })
+                processQueue.async {
+                    var blurImage: Image?
+                    if let im = image, let radius = options.blurryRadius {
+                        let blur = BlurImageProcessor(blurRadius: radius)
+                        blurImage = blur.process(item: .image(im), options: options)
+                    }
                     
-                    if options.cacheOriginalImage && options.processor != DefaultImageProcessor.default {
-                        let originalCache = options.originalCache ?? targetCache
-                        let defaultProcessor = DefaultImageProcessor.default
-                        processQueue.async {
-                            if let originalImage = defaultProcessor.process(item: .data(originalData), options: options) {
-                                originalCache.store(originalImage,
-                                                    original: originalData,
-                                                    forKey: key,
-                                                    processorIdentifier: defaultProcessor.identifier,
-                                                    cacheSerializer: options.cacheSerializer,
-                                                    toDisk: !options.cacheMemoryOnly,
-                                                    completionHandler: nil)
+                    let targetCache = options.targetCache ?? self.cache
+                    if let error = error, error.code == KingfisherError.notModified.rawValue {
+                        // Not modified. Try to find the image from cache.
+                        // (The image should be in cache. It should be guaranteed by the framework users.)
+                        targetCache.retrieveImage(forKey: key, options: options, completionHandler: { (cacheImage, cacheType) -> Void in
+                            diskTaskCompletionHandler(cacheImage, nil, cacheType, url)
+                        })
+                        return
+                    }
+                    
+                    if let image = image, let originalData = originalData {
+                        targetCache.store(image,
+                                          blurImage: blurImage,
+                                          original: originalData,
+                                          forKey: key,
+                                          processorIdentifier:options.processor.identifier,
+                                          cacheSerializer: options.cacheSerializer,
+                                          toDisk: !options.cacheMemoryOnly,
+                                          completionHandler: {
+                                            guard options.waitForCache else { return }
+                                            
+                                            let cacheType = targetCache.imageCachedType(forKey: key, processorIdentifier: options.processor.identifier)
+                                            let callbackImage = blurImage ?? image
+                                            options.callbackDispatchQueue.safeAsync {
+                                                diskTaskCompletionHandler(callbackImage, nil, cacheType, url)
+                                            }
+                        })
+                        
+                        if options.cacheOriginalImage && options.processor != DefaultImageProcessor.default {
+                            let originalCache = options.originalCache ?? targetCache
+                            let defaultProcessor = DefaultImageProcessor.default
+                            processQueue.async {
+                                if let originalImage = defaultProcessor.process(item: .data(originalData), options: options) {
+                                    originalCache.store(originalImage,
+                                                        blurImage: nil,
+                                                        original: originalData,
+                                                        forKey: key,
+                                                        processorIdentifier: defaultProcessor.identifier,
+                                                        cacheSerializer: options.cacheSerializer,
+                                                        toDisk: !options.cacheMemoryOnly,
+                                                        completionHandler: nil)
+                                }
                             }
                         }
                     }
-                }
 
-                if options.waitForCache == false || image == nil {
-                    completionHandler?(image, error, .none, url)
+                    if options.waitForCache == false || image == nil {
+                        let callbackImage = blurImage ?? image
+                        options.callbackDispatchQueue.safeAsync {
+                            diskTaskCompletionHandler(callbackImage, error, .none, url)
+                        }
+                    }
                 }
             })
     }
@@ -237,7 +262,7 @@ public class KingfisherManager {
         let targetCache = options.targetCache ?? self.cache
         let processQueue = self.processQueue
         // First, try to get the exactly image from cache
-        targetCache.retrieveImage(forKey: key, options: options) { image, cacheType in
+        retrieveImageTask.diskTask = targetCache.retrieveImage(forKey: key, options: options) { image, cacheType in
             // If found, we could finish now.
             if image != nil {
                 diskTaskCompletionHandler(image, nil, cacheType, url)
@@ -270,7 +295,13 @@ public class KingfisherManager {
                         }
                         return
                     }
+                    var blurImage: Image?
+                    if let radius = options.blurryRadius {
+                        let blur = BlurImageProcessor(blurRadius: radius)
+                        blurImage = blur.process(item: .image(processedImage), options: options)
+                    }
                     targetCache.store(processedImage,
+                                      blurImage: blurImage,
                                       original: nil,
                                       forKey: key,
                                       processorIdentifier:options.processor.identifier,
@@ -286,8 +317,9 @@ public class KingfisherManager {
                     })
 
                     if options.waitForCache == false {
+                        let callbackImage = blurImage ?? processedImage
                         options.callbackDispatchQueue.safeAsync {
-                            diskTaskCompletionHandler(processedImage, nil, .none, url)
+                            diskTaskCompletionHandler(callbackImage, nil, .none, url)
                         }
                     }
                 }
