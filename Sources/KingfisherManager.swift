@@ -188,6 +188,7 @@ public class KingfisherManager {
                     if let image = image, let originalData = originalData {
                         targetCache.store(image,
                                           blurImage: blurImage,
+                                          blurRadius: options.blurryRadius,
                                           original: originalData,
                                           forKey: key,
                                           processorIdentifier:options.processor.identifier,
@@ -210,6 +211,7 @@ public class KingfisherManager {
                                 if let originalImage = defaultProcessor.process(item: .data(originalData), options: options) {
                                     originalCache.store(originalImage,
                                                         blurImage: nil,
+                                                        blurRadius: nil,
                                                         original: originalData,
                                                         forKey: key,
                                                         processorIdentifier: defaultProcessor.identifier,
@@ -302,9 +304,10 @@ public class KingfisherManager {
                     }
                     targetCache.store(processedImage,
                                       blurImage: blurImage,
+                                      blurRadius: options.blurryRadius,
                                       original: nil,
                                       forKey: key,
-                                      processorIdentifier:options.processor.identifier,
+                                      processorIdentifier: options.processor.identifier,
                                       cacheSerializer: options.cacheSerializer,
                                       toDisk: !options.cacheMemoryOnly,
                                       completionHandler: {

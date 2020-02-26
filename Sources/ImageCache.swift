@@ -187,6 +187,7 @@ open class ImageCache {
     
     - parameter image:             The image to be stored.
     - parameter blurImage:         The image change to be blur image and to be stored in memory cache.
+    - parameter blurRadius:        The blur radius for this image to stored.
     - parameter original:          The original data of the image.
                                    Kingfisher will use it to check the format of the image and optimize cache size on disk.
                                    If `nil` is supplied, the image data will be saved as a normalized PNG file.
@@ -200,6 +201,7 @@ open class ImageCache {
     */
     open func store(_ image: Image,
                       blurImage: Image? = nil,
+                      blurRadius: CGFloat? = nil,
                       original: Data? = nil,
                       forKey key: String,
                       processorIdentifier identifier: String = "",
@@ -207,10 +209,14 @@ open class ImageCache {
                       toDisk: Bool = true,
                       completionHandler: (() -> Void)? = nil)
     {
-        
         let computedKey = key.computedKey(with: identifier)
         if let blur = blurImage {
-            memoryCache.setObject(blur, forKey: computedKey as NSString, cost: blur.kf.imageCost)
+            var newKey = identifier
+            if let radius = blurRadius {
+                newKey += ".\(radius)"
+            }
+            let cacheKey = key.computedKey(with: newKey)
+            memoryCache.setObject(blur, forKey: cacheKey as NSString, cost: blur.kf.imageCost)
         } else {
             memoryCache.setObject(image, forKey: computedKey as NSString, cost: image.kf.imageCost)
         }
@@ -339,6 +345,7 @@ open class ImageCache {
                             
                             sSelf.store(result,
                                         blurImage: blurImage,
+                                        blurRadius: options.blurryRadius,
                                         forKey: key,
                                         processorIdentifier: options.processor.identifier,
                                         cacheSerializer: options.cacheSerializer,
@@ -362,6 +369,7 @@ open class ImageCache {
                         
                         sSelf.store(image,
                                     blurImage: blurImage,
+                                    blurRadius: options.blurryRadius,
                                     forKey: key,
                                     processorIdentifier: options.processor.identifier,
                                     cacheSerializer: options.cacheSerializer,
@@ -401,7 +409,11 @@ open class ImageCache {
     open func retrieveImageInMemoryCache(forKey key: String, options: KingfisherOptionsInfo? = nil) -> Image? {
         
         let options = options ?? KingfisherEmptyOptionsInfo
-        let computedKey = key.computedKey(with: options.processor.identifier)
+        var newKey = options.processor.identifier
+        if let radius = options.blurryRadius {
+            newKey += ".\(radius)"
+        }
+        let computedKey = key.computedKey(with: newKey)
         
         return memoryCache.object(forKey: computedKey as NSString) as? Image
     }
