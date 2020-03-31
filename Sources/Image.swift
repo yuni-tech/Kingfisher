@@ -747,8 +747,9 @@ extension Kingfisher where Base: Image {
         
         let rect = CGRect(x: 0, y: 0, width: CGFloat(imageRef.width), height: CGFloat(imageRef.height))
         context.draw(imageRef, in: rect)
-        let decompressedImageRef = context.makeImage()
-        return Kingfisher<Image>.image(cgImage: decompressedImageRef!, scale: scale, refImage: base)
+        // Draw image from contxt failed.
+        let decompressedImageRef = context.makeImage() ?? imageRef
+        return Kingfisher<Image>.image(cgImage: decompressedImageRef, scale: scale, refImage: base)
     }
 }
 
