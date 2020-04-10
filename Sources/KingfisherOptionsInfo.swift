@@ -38,8 +38,8 @@ public typealias KingfisherOptionsInfo = [KingfisherOptionsInfoItem]
 let KingfisherEmptyOptionsInfo = [KingfisherOptionsInfoItem]()
 
 /**
-Items could be added into KingfisherOptionsInfo.
-*/
+ Items could be added into KingfisherOptionsInfo.
+ */
 public enum KingfisherOptionsInfoItem {
     /// The associated value of this member should be an ImageCache object. Kingfisher will use the specified
     /// cache object when handling related operations, including trying to retrieve the cached images and store
@@ -131,6 +131,12 @@ public enum KingfisherOptionsInfoItem {
     /// of `Image`, such as a `UIImage`, that do not persist when caching the image.
     case imageModifier(ImageModifier)
     
+    /// Check the url of image downloader whether is expired.
+    /// If the url was expired, the downloader will return the
+    /// image of `ImageURLValidExpired`.
+    /// `NoExpired.default` will be used by default.
+    case expired(ImageURLValidExpired)
+    
     /// Modifier for blur an image before callback.
     /// If the radius is 0, that will not modify the image
     /// Otherwise, will change the image before callback to other.
@@ -183,6 +189,7 @@ func <== (lhs: KingfisherOptionsInfoItem, rhs: KingfisherOptionsInfoItem) -> Boo
     case (.processor(_), .processor(_)): return true
     case (.cacheSerializer(_), .cacheSerializer(_)): return true
     case (.imageModifier(_), .imageModifier(_)): return true
+    case (.expired(_), .expired(_)): return true
     case (.blurry(_), .blurry(_)): return true
     case (.keepCurrentImageWhileLoading, .keepCurrentImageWhileLoading): return true
     case (.onlyLoadFirstFrame, .onlyLoadFirstFrame): return true
@@ -202,7 +209,7 @@ extension Collection where Iterator.Element == KingfisherOptionsInfoItem {
     }
 }
 
-public extension Collection where Iterator.Element == KingfisherOptionsInfoItem {
+extension Collection where Iterator.Element == KingfisherOptionsInfoItem {
     /// The target `ImageCache` which is used.
     public var targetCache: ImageCache? {
         if let item = lastMatchIgnoringAssociatedValue(.targetCache(.default)),
@@ -324,10 +331,21 @@ public extension Collection where Iterator.Element == KingfisherOptionsInfoItem 
         return NoModifier.default
     }
     
+    /// The `ImageURLValidExpired` will be used before download image.
+    public var expired: ImageURLValidExpired {
+        if let item = lastMatchIgnoringAssociatedValue(.expired(NoExpired.default)),
+            case .expired(let valid) = item
+        {
+            return valid
+        }
+        return NoExpired.default
+    }
+    
     /// The radius which should be used for the blur image.
     public var blurryRadius: CGFloat? {
         if let item = lastMatchIgnoringAssociatedValue(.blurry(0)),
-            case .blurry(let radius) = item {
+            case .blurry(let radius) = item
+        {
             return radius
         }
         return nil

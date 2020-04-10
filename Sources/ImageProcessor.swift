@@ -69,7 +69,7 @@ public protocol ImageProcessor {
 
 typealias ProcessorImp = ((ImageProcessItem, KingfisherOptionsInfo) -> Image?)
 
-public extension ImageProcessor {
+extension ImageProcessor {
     
     /// Append an `ImageProcessor` to another. The identifier of the new `ImageProcessor` 
     /// will be "\(self.identifier)|>\(another.identifier)".

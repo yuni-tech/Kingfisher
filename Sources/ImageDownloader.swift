@@ -334,6 +334,15 @@ open class ImageDownloader {
             return nil
         }
         
+        // Valid the url was expired before init request.
+        if let valid = options?.expired {
+            let result = valid.valid(for: url)
+            guard !result.expired else {
+                completionHandler?(result.image, NSError(domain: KingfisherErrorDomain, code: KingfisherError.downloadCancelledBeforeStarting.rawValue, userInfo: nil), url, nil)
+                return nil
+            }
+        }
+        
         let timeout = self.downloadTimeout == 0.0 ? 15.0 : self.downloadTimeout
         
         // We need to set the URL as the load key. So before setup progress, we need to ask the `requestModifier` for a final URL.
