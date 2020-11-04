@@ -31,24 +31,24 @@
 //  The name and characters used in the demo of this software are property of their
 //  respective owners.
 
+#if !os(watchOS)
+#if canImport(UIKit)
 import UIKit
 import ImageIO
 
 /// Protocol of `AnimatedImageView`.
 public protocol AnimatedImageViewDelegate: AnyObject {
-    /**
-     Called after the animatedImageView has finished each animation loop.
 
-     - parameter imageView: The animatedImageView that is being animated.
-     - parameter count: The looped count.
-     */
+    /// Called after the animatedImageView has finished each animation loop.
+    ///
+    /// - Parameters:
+    ///   - imageView: The `AnimatedImageView` that is being animated.
+    ///   - count: The looped count.
     func animatedImageView(_ imageView: AnimatedImageView, didPlayAnimationLoops count: UInt)
 
-    /**
-     Called after the animatedImageView has reached the max repeat count.
-
-     - parameter imageView: The animatedImageView that is being animated.
-     */
+    /// Called after the `AnimatedImageView` has reached the max repeat count.
+    ///
+    /// - Parameter imageView: The `AnimatedImageView` that is being animated.
     func animatedImageViewDidFinishAnimating(_ imageView: AnimatedImageView)
 }
 
@@ -57,10 +57,23 @@ extension AnimatedImageViewDelegate {
     public func animatedImageViewDidFinishAnimating(_ imageView: AnimatedImageView) {}
 }
 
-/// `AnimatedImageView` is a subclass of `UIImageView` for displaying animated image.
+#if swift(>=4.2)
+let KFRunLoopModeCommon = RunLoop.Mode.common
+#else
+let KFRunLoopModeCommon = RunLoopMode.commonModes
+#endif
+
+/// Represents a subclass of `UIImageView` for displaying animated image.
+/// Different from showing animated image in a normal `UIImageView` (which load all frames at one time),
+/// `AnimatedImageView` only tries to load several frames (defined by `framePreloadCount`) to reduce memory usage.
+/// It provides a tradeoff between memory usage and CPU time. If you have a memory issue when using a normal image
+/// view to load GIF data, you could give this class a try.
+///
+/// Kingfisher supports setting GIF animated data to either `UIImageView` and `AnimatedImageView` out of box. So
+/// it would be fairly easy to switch between them.
 open class AnimatedImageView: UIImageView {
     
-    /// Proxy object for prevending a reference cycle between the CADDisplayLink and AnimatedImageView.
+    /// Proxy object for preventing a reference cycle between the `CADDisplayLink` and `AnimatedImageView`.
     class TargetProxy {
         private weak var target: AnimatedImageView?
         
@@ -69,7 +82,7 @@ open class AnimatedImageView: UIImageView {
         }
         
         @objc func onScreenUpdate() {
-            target?.updateFrame()
+            target?.updateFrameIfNeeded()
         }
     }
 
@@ -98,45 +111,37 @@ open class AnimatedImageView: UIImageView {
     }
     
     // MARK: - Public property
-    /// Whether automatically play the animation when the view become visible. Default is true.
+    /// Whether automatically play the animation when the view become visible. Default is `true`.
     public var autoPlayAnimatedImage = true
     
-    /// The size of the frame cache.
+    /// The count of the frames should be preloaded before shown.
     public var framePreloadCount = 10
     
-    /// Specifies whether the GIF frames should be pre-scaled to save memory. Default is true.
+    /// Specifies whether the GIF frames should be pre-scaled to the image view's size or not.
+    /// If the downloaded image is larger than the image view's size, it will help to reduce some memory use.
+    /// Default is `true`.
     public var needsPrescaling = true
-    
-    /// The animation timer's run loop mode. Default is `NSRunLoopCommonModes`. Set this property to `NSDefaultRunLoopMode` will make the animation pause during UIScrollView scrolling.
-    #if swift(>=4.2)
-    public var runLoopMode = RunLoop.Mode.common {
-        willSet {
-            if runLoopMode == newValue {
-                return
-            } else {
-                stopAnimating()
-                displayLink.remove(from: .main, forMode: runLoopMode)
-                displayLink.add(to: .main, forMode: newValue)
-                startAnimating()
-            }
-        }
-    }
-    #else
-    public var runLoopMode = RunLoopMode.commonModes {
-        willSet {
-            if runLoopMode == newValue {
-                return
-            } else {
-                stopAnimating()
-                displayLink.remove(from: .main, forMode: runLoopMode)
-                displayLink.add(to: .main, forMode: newValue)
-                startAnimating()
-            }
-        }
-    }
-    #endif
 
-    /// The repeat count.
+    /// Decode the GIF frames in background thread before using. It will decode frames data and do a off-screen
+    /// rendering to extract pixel information in background. This can reduce the main thread CPU usage.
+    public var backgroundDecode = false
+
+    /// The animation timer's run loop mode. Default is `RunLoop.Mode.common`.
+    /// Set this property to `RunLoop.Mode.default` will make the animation pause during UIScrollView scrolling.
+    public var runLoopMode = KFRunLoopModeCommon {
+        willSet {
+            guard runLoopMode != newValue else { return }
+            stopAnimating()
+            displayLink.remove(from: .main, forMode: runLoopMode)
+            displayLink.add(to: .main, forMode: newValue)
+            startAnimating()
+        }
+    }
+    
+    /// The repeat count. The animated image will keep animate until it the loop count reaches this value.
+    /// Setting this value to another one will reset current animation.
+    ///
+    /// Default is `.infinite`, which means the animation will last forever.
     public var repeatCount = RepeatCount.infinite {
         didSet {
             if oldValue != repeatCount {
@@ -153,15 +158,21 @@ open class AnimatedImageView: UIImageView {
     // MARK: - Private property
     /// `Animator` instance that holds the frames of a specific image in memory.
     private var animator: Animator?
+
+    // Dispatch queue used for preloading images.
+    private lazy var preloadQueue: DispatchQueue = {
+        return DispatchQueue(label: "com.onevcat.Kingfisher.Animator.preloadQueue")
+    }()
     
-    /// A flag to avoid invalidating the displayLink on deinit if it was never created, because displayLink is so lazy. :D
+    // A flag to avoid invalidating the displayLink on deinit if it was never created, because displayLink is so lazy.
     private var isDisplayLinkInitialized: Bool = false
     
-    /// A display link that keeps calling the `updateFrame` method on every screen refresh.
+    // A display link that keeps calling the `updateFrame` method on every screen refresh.
     private lazy var displayLink: CADisplayLink = {
-        self.isDisplayLinkInitialized = true
-        let displayLink = CADisplayLink(target: TargetProxy(target: self), selector: #selector(TargetProxy.onScreenUpdate))
-        displayLink.add(to: .main, forMode: self.runLoopMode)
+        isDisplayLinkInitialized = true
+        let displayLink = CADisplayLink(
+            target: TargetProxy(target: self), selector: #selector(TargetProxy.onScreenUpdate))
+        displayLink.add(to: .main, forMode: runLoopMode)
         displayLink.isPaused = true
         return displayLink
     }()
@@ -193,15 +204,11 @@ open class AnimatedImageView: UIImageView {
     
     /// Starts the animation.
     override open func startAnimating() {
-        if self.isAnimating {
-            return
-        } else {
-            if animator?.isReachMaxRepeatCount ?? false {
-                return
-            }
+        guard !isAnimating else { return }
+        guard let animator = animator else { return }
+        guard !animator.isReachMaxRepeatCount else { return }
 
-            displayLink.isPaused = false
-        }
+        displayLink.isPaused = false
     }
     
     /// Stops the animation.
@@ -213,7 +220,7 @@ open class AnimatedImageView: UIImageView {
     }
     
     override open func display(_ layer: CALayer) {
-        if let currentFrame = animator?.currentFrame {
+        if let currentFrame = animator?.currentFrameImage {
             layer.contents = currentFrame.cgImage
         } else {
             layer.contents = image?.cgImage
@@ -230,24 +237,28 @@ open class AnimatedImageView: UIImageView {
         didMove()
     }
 
-    // This is for back compatibility that using regular UIImageView to show animated image.
+    // This is for back compatibility that using regular `UIImageView` to show animated image.
     override func shouldPreloadAllAnimation() -> Bool {
         return false
     }
 
-    // MARK: - Private method
-    /// Reset the animator.
+    // Reset the animator.
     private func reset() {
         animator = nil
         if let imageSource = image?.kf.imageSource?.imageRef {
-            animator = Animator(imageSource: imageSource,
-                                contentMode: contentMode,
-                                size: bounds.size,
-                                framePreloadCount: framePreloadCount,
-                                repeatCount: repeatCount)
-            animator?.delegate = self
-            animator?.needsPrescaling = needsPrescaling
-            animator?.prepareFramesAsynchronously()
+            let targetSize = bounds.scaled(UIScreen.main.scale).size
+            let animator = Animator(
+                imageSource: imageSource,
+                contentMode: contentMode,
+                size: targetSize,
+                framePreloadCount: framePreloadCount,
+                repeatCount: repeatCount,
+                preloadQueue: preloadQueue)
+            animator.delegate = self
+            animator.needsPrescaling = needsPrescaling
+            animator.backgroundDecode = backgroundDecode
+            animator.prepareFramesAsynchronously()
+            self.animator = animator
         }
         didMove()
     }
@@ -263,34 +274,46 @@ open class AnimatedImageView: UIImageView {
     }
     
     /// Update the current frame with the displayLink duration.
-    private func updateFrame() {
+    private func updateFrameIfNeeded() {
+        guard let animator = animator else {
+            return
+        }
+
+        guard !animator.isFinished else {
+            stopAnimating()
+            delegate?.animatedImageViewDidFinishAnimating(self)
+            return
+        }
+
         let duration: CFTimeInterval
 
         // CA based display link is opt-out from ProMotion by default.
-        // So the duration and its FPS might not match. 
+        // So the duration and its FPS might not match.
         // See [#718](https://github.com/onevcat/Kingfisher/issues/718)
+        // By setting CADisableMinimumFrameDuration to YES in Info.plist may
+        // cause the preferredFramesPerSecond being 0
         if #available(iOS 10.0, tvOS 10.0, *) {
-            // By setting CADisableMinimumFrameDuration to YES in Info.plist may 
-            // cause the preferredFramesPerSecond being 0
-            if displayLink.preferredFramesPerSecond == 0 {
+            let preferredFramesPerSecond = displayLink.preferredFramesPerSecond
+            if preferredFramesPerSecond == 0 {
                 duration = displayLink.duration
             } else {
                 // Some devices (like iPad Pro 10.5) will have a different FPS.
-                duration = 1.0 / Double(displayLink.preferredFramesPerSecond)
+                duration = 1.0 / TimeInterval(preferredFramesPerSecond)
             }
         } else {
             duration = displayLink.duration
         }
-    
-        if animator?.updateCurrentFrame(duration: duration) ?? false {
-            layer.setNeedsDisplay()
 
-            if animator?.isReachMaxRepeatCount ?? false {
-                stopAnimating()
-                delegate?.animatedImageViewDidFinishAnimating(self)
+        animator.shouldChangeFrame(with: duration) { [weak self] hasNewFrame in
+            if hasNewFrame {
+                self?.layer.setNeedsDisplay()
             }
         }
     }
+}
+
+protocol AnimatorDelegate: AnyObject {
+    func animator(_ animator: AnimatedImageView.Animator, didPlayAnimationLoops count: UInt)
 }
 
 extension AnimatedImageView: AnimatorDelegate {
@@ -299,205 +322,390 @@ extension AnimatedImageView: AnimatorDelegate {
     }
 }
 
-/// Keeps a reference to an `Image` instance and its duration as a GIF frame.
-struct AnimatedFrame {
-    var image: Image?
+extension AnimatedImageView {
+
+    // Represents a single frame in a GIF.
+    struct AnimatedFrame {
+
+        // The image to display for this frame. Its value is nil when the frame is removed from the buffer.
+        let image: UIImage?
+
+        // The duration that this frame should remain active.
+        let duration: TimeInterval
+
+        // A placeholder frame with no image assigned.
+        // Used to replace frames that are no longer needed in the animation.
+        var placeholderFrame: AnimatedFrame {
+            return AnimatedFrame(image: nil, duration: duration)
+        }
+
+        // Whether this frame instance contains an image or not.
+        var isPlaceholder: Bool {
+            return image == nil
+        }
+
+        // Returns a new instance from an optional image.
+        //
+        // - parameter image: An optional `UIImage` instance to be assigned to the new frame.
+        // - returns: An `AnimatedFrame` instance.
+        func makeAnimatedFrame(image: UIImage?) -> AnimatedFrame {
+            return AnimatedFrame(image: image, duration: duration)
+        }
+    }
+}
+
+extension AnimatedImageView {
+
+    // MARK: - Animator
+    class Animator {
+        private let size: CGSize
+        private let maxFrameCount: Int
+        private let imageSource: CGImageSource
+        private let maxRepeatCount: RepeatCount
+
+        private let maxTimeStep: TimeInterval = 1.0
+        private let animatedFrames = SafeArray<AnimatedFrame>()
+        private var frameCount = 0
+        private var timeSinceLastFrameChange: TimeInterval = 0.0
+        private var currentRepeatCount: UInt = 0
+
+        var isFinished: Bool = false
+
+        var needsPrescaling = true
+
+        var backgroundDecode = true
+
+        weak var delegate: AnimatorDelegate?
+
+        // Total duration of one animation loop
+        var loopDuration: TimeInterval = 0
+
+        // Current active frame image
+        var currentFrameImage: UIImage? {
+            return frame(at: currentFrameIndex)
+        }
+
+        // Current active frame duration
+        var currentFrameDuration: TimeInterval {
+            return duration(at: currentFrameIndex)
+        }
+
+        // The index of the current GIF frame.
+        var currentFrameIndex = 0 {
+            didSet {
+                previousFrameIndex = oldValue
+            }
+        }
+
+        var previousFrameIndex = 0 {
+            didSet {
+                preloadQueue.async {
+                    self.updatePreloadedFrames()
+                }
+            }
+        }
+
+        var isReachMaxRepeatCount: Bool {
+            switch maxRepeatCount {
+            case .once:
+                return currentRepeatCount >= 1
+            case .finite(let maxCount):
+                return currentRepeatCount >= maxCount
+            case .infinite:
+                return false
+            }
+        }
+
+        var isLastFrame: Bool {
+            return currentFrameIndex == frameCount - 1
+        }
+
+        var preloadingIsNeeded: Bool {
+            return maxFrameCount < frameCount - 1
+        }
+
+        var contentMode = UIView.ContentMode.scaleToFill
+
+        private lazy var preloadQueue: DispatchQueue = {
+            return DispatchQueue(label: "com.onevcat.Kingfisher.Animator.preloadQueue")
+        }()
+
+        /// Creates an animator with image source reference.
+        ///
+        /// - Parameters:
+        ///   - source: The reference of animated image.
+        ///   - mode: Content mode of the `AnimatedImageView`.
+        ///   - size: Size of the `AnimatedImageView`.
+        ///   - count: Count of frames needed to be preloaded.
+        ///   - repeatCount: The repeat count should this animator uses.
+        init(imageSource source: CGImageSource,
+             contentMode mode: UIView.ContentMode,
+             size: CGSize,
+             framePreloadCount count: Int,
+             repeatCount: RepeatCount,
+             preloadQueue: DispatchQueue) {
+            self.imageSource = source
+            self.contentMode = mode
+            self.size = size
+            self.maxFrameCount = count
+            self.maxRepeatCount = repeatCount
+            self.preloadQueue = preloadQueue
+        }
+
+        func frame(at index: Int) -> Image? {
+            return animatedFrames[index]?.image
+        }
+
+        func duration(at index: Int) -> TimeInterval {
+            return animatedFrames[index]?.duration  ?? .infinity
+        }
+
+        func prepareFramesAsynchronously() {
+            frameCount = Int(CGImageSourceGetCount(imageSource))
+            animatedFrames.reserveCapacity(frameCount)
+            preloadQueue.async { [weak self] in
+                self?.setupAnimatedFrames()
+            }
+        }
+
+        func shouldChangeFrame(with duration: CFTimeInterval, handler: (Bool) -> Void) {
+            incrementTimeSinceLastFrameChange(with: duration)
+
+            if currentFrameDuration > timeSinceLastFrameChange {
+                handler(false)
+            } else {
+                resetTimeSinceLastFrameChange()
+                incrementCurrentFrameIndex()
+                handler(true)
+            }
+        }
+
+        private func setupAnimatedFrames() {
+            resetAnimatedFrames()
+
+            var duration: TimeInterval = 0
+
+            (0..<frameCount).forEach { index in
+                let frameDuration = GIFAnimatedImage.getFrameDuration(from: imageSource, at: index)
+                duration += min(frameDuration, maxTimeStep)
+                animatedFrames.append(AnimatedFrame(image: nil, duration: frameDuration))
+
+                if index > maxFrameCount { return }
+                animatedFrames[index] = animatedFrames[index]?.makeAnimatedFrame(image: loadFrame(at: index))
+            }
+
+            self.loopDuration = duration
+        }
+
+        private func resetAnimatedFrames() {
+            animatedFrames.removeAll()
+        }
+
+        private func loadFrame(at index: Int) -> UIImage? {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: max(size.width, size.height)
+            ]
+
+            let resize = needsPrescaling && size != .zero
+            guard let cgImage = CGImageSourceCreateImageAtIndex(imageSource,
+                                                                index,
+                                                                resize ? options as CFDictionary : nil) else {
+                return nil
+            }
+
+            let image = Image(cgImage: cgImage)
+            return backgroundDecode ? image.kf.decoded : image
+        }
+        
+        private func updatePreloadedFrames() {
+            guard preloadingIsNeeded else {
+                return
+            }
+
+            animatedFrames[previousFrameIndex] = animatedFrames[previousFrameIndex]?.placeholderFrame
+
+            preloadIndexes(start: currentFrameIndex).forEach { index in
+                guard let currentAnimatedFrame = animatedFrames[index] else { return }
+                if !currentAnimatedFrame.isPlaceholder { return }
+                animatedFrames[index] = currentAnimatedFrame.makeAnimatedFrame(image: loadFrame(at: index))
+            }
+        }
+
+        private func incrementCurrentFrameIndex() {
+            currentFrameIndex = increment(frameIndex: currentFrameIndex)
+            if isLastFrame {
+                currentRepeatCount += 1
+                if isReachMaxRepeatCount {
+                    isFinished = true
+                }
+                delegate?.animator(self, didPlayAnimationLoops: currentRepeatCount)
+            }
+        }
+
+        private func incrementTimeSinceLastFrameChange(with duration: TimeInterval) {
+            timeSinceLastFrameChange += min(maxTimeStep, duration)
+        }
+
+        private func resetTimeSinceLastFrameChange() {
+            timeSinceLastFrameChange -= currentFrameDuration
+        }
+
+        private func increment(frameIndex: Int, by value: Int = 1) -> Int {
+            return (frameIndex + value) % frameCount
+        }
+
+        private func preloadIndexes(start index: Int) -> [Int] {
+            let nextIndex = increment(frameIndex: index)
+            let lastIndex = increment(frameIndex: index, by: maxFrameCount)
+
+            if lastIndex >= nextIndex {
+                return [Int](nextIndex...lastIndex)
+            } else {
+                return [Int](nextIndex..<frameCount) + [Int](0...lastIndex)
+            }
+        }
+    }
+}
+
+class SafeArray<Element> {
+    private var array: Array<Element> = []
+    private let lock = NSLock()
+    
+    subscript(index: Int) -> Element? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return array.indices ~= index ? array[index] : nil
+        }
+        
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            if let newValue = newValue, array.indices ~= index {
+                array[index] = newValue
+            }
+        }
+    }
+    
+    var count : Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return array.count
+    }
+    
+    func reserveCapacity(_ count: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        array.reserveCapacity(count)
+    }
+    
+    func append(_ element: Element) {
+        lock.lock()
+        defer { lock.unlock() }
+        array += [element]
+    }
+    
+    func removeAll() {
+        lock.lock()
+        defer { lock.unlock() }
+        array = []
+    }
+}
+#endif
+#endif
+
+/// Represents a set of image creating options used in Kingfisher.
+public struct ImageCreatingOptions {
+
+    /// The target scale of image needs to be created.
+    public let scale: CGFloat
+
+    /// The expected animation duration if an animated image being created.
+    public let duration: TimeInterval
+
+    /// For an animated image, whether or not all frames should be loaded before displaying.
+    public let preloadAll: Bool
+
+    /// For an animated image, whether or not only the first image should be
+    /// loaded as a static image. It is useful for preview purpose of an animated image.
+    public let onlyFirstFrame: Bool
+    
+    /// Creates an `ImageCreatingOptions` object.
+    ///
+    /// - Parameters:
+    ///   - scale: The target scale of image needs to be created. Default is `1.0`.
+    ///   - duration: The expected animation duration if an animated image being created.
+    ///               A value less or equal to `0.0` means the animated image duration will
+    ///               be determined by the frame data. Default is `0.0`.
+    ///   - preloadAll: For an animated image, whether or not all frames should be loaded before displaying.
+    ///                 Default is `false`.
+    ///   - onlyFirstFrame: For an animated image, whether or not only the first image should be
+    ///                     loaded as a static image. It is useful for preview purpose of an animated image.
+    ///                     Default is `false`.
+    public init(
+        scale: CGFloat = 1.0,
+        duration: TimeInterval = 0.0,
+        preloadAll: Bool = false,
+        onlyFirstFrame: Bool = false)
+    {
+        self.scale = scale
+        self.duration = duration
+        self.preloadAll = preloadAll
+        self.onlyFirstFrame = onlyFirstFrame
+    }
+}
+
+// Represents the decoding for a GIF image. This class extracts frames from an `imageSource`, then
+// hold the images for later use.
+class GIFAnimatedImage {
+    let images: [Image]
     let duration: TimeInterval
     
-    static let null: AnimatedFrame = AnimatedFrame(image: .none, duration: 0.0)
-}
-
-protocol AnimatorDelegate: AnyObject {
-    func animator(_ animator: Animator, didPlayAnimationLoops count: UInt)
-}
-
-// MARK: - Animator
-class Animator {
-    // MARK: Private property
-    fileprivate let size: CGSize
-    fileprivate let maxFrameCount: Int
-    fileprivate let imageSource: CGImageSource
-    fileprivate let maxRepeatCount: AnimatedImageView.RepeatCount
-    
-    fileprivate var animatedFrames = [AnimatedFrame]()
-    fileprivate let maxTimeStep: TimeInterval = 1.0
-    fileprivate var frameCount = 0
-    fileprivate var currentFrameIndex = 0
-    fileprivate var currentFrameIndexInBuffer = 0
-    fileprivate var currentPreloadIndex = 0
-    fileprivate var timeSinceLastFrameChange: TimeInterval = 0.0
-    fileprivate var needsPrescaling = true
-    fileprivate var currentRepeatCount: UInt = 0
-    fileprivate weak var delegate: AnimatorDelegate?
-    
-    /// Loop count of animated image.
-    private var loopCount = 0
-    
-    var currentFrame: UIImage? {
-        return frame(at: currentFrameIndexInBuffer)
-    }
-
-    var isReachMaxRepeatCount: Bool {
-        switch maxRepeatCount {
-        case .once:
-            return currentRepeatCount >= 1
-        case .finite(let maxCount):
-            return currentRepeatCount >= maxCount
-        case .infinite:
-            return false
-        }
-    }
-    
-    var contentMode = UIView.ContentMode.scaleToFill
-    
-    private lazy var preloadQueue: DispatchQueue = {
-        return DispatchQueue(label: "com.onevcat.Kingfisher.Animator.preloadQueue")
-    }()
-    
-    /**
-     Init an animator with image source reference.
-     
-     - parameter imageSource: The reference of animated image.
-     - parameter contentMode: Content mode of AnimatedImageView.
-     - parameter size: Size of AnimatedImageView.
-     - parameter framePreloadCount: Frame cache size.
-     
-     - returns: The animator object.
-     */
-    init(imageSource source: CGImageSource,
-         contentMode mode: UIView.ContentMode,
-         size: CGSize,
-         framePreloadCount count: Int,
-         repeatCount: AnimatedImageView.RepeatCount) {
-        self.imageSource = source
-        self.contentMode = mode
-        self.size = size
-        self.maxFrameCount = count
-        self.maxRepeatCount = repeatCount
-    }
-    
-    func frame(at index: Int) -> Image? {
-        return animatedFrames[safe: index]?.image
-    }
-    
-    func prepareFramesAsynchronously() {
-        preloadQueue.async { [weak self] in
-            self?.prepareFrames()
-        }
-    }
-    
-    private func prepareFrames() {
-        frameCount = CGImageSourceGetCount(imageSource)
+    init?(from imageSource: CGImageSource, for info: [String: Any], options: ImageCreatingOptions) {
+        let frameCount = CGImageSourceGetCount(imageSource)
+        var images = [Image]()
+        var gifDuration = 0.0
         
-        if let properties = CGImageSourceCopyProperties(imageSource, nil),
-            let gifInfo = (properties as NSDictionary)[kCGImagePropertyGIFDictionary as String] as? NSDictionary,
-            let loopCount = gifInfo[kCGImagePropertyGIFLoopCount as String] as? Int
-        {
-            self.loopCount = loopCount
-        }
-        
-        let frameToProcess = min(frameCount, maxFrameCount)
-        animatedFrames.reserveCapacity(frameToProcess)
-        animatedFrames = (0..<frameToProcess).reduce([]) { $0 + pure(prepareFrame(at: $1))}
-        currentPreloadIndex = (frameToProcess + 1) % frameCount - 1
-    }
-    
-    private func prepareFrame(at index: Int) -> AnimatedFrame {
-        
-        guard let imageRef = CGImageSourceCreateImageAtIndex(imageSource, index, nil) else {
-            return AnimatedFrame.null
-        }
-        
-        let defaultGIFFrameDuration = 0.100
-        let frameDuration = imageSource.kf.gifProperties(at: index).map {
-            gifInfo -> Double in
+        for i in 0 ..< frameCount {
+            guard let imageRef = CGImageSourceCreateImageAtIndex(imageSource, i, info as CFDictionary) else {
+                return nil
+            }
             
-            let unclampedDelayTime = gifInfo[kCGImagePropertyGIFUnclampedDelayTime as String] as Double?
-            let delayTime = gifInfo[kCGImagePropertyGIFDelayTime as String] as Double?
-            let duration = unclampedDelayTime ?? delayTime ?? 0.0
-            
-            /**
-             http://opensource.apple.com/source/WebCore/WebCore-7600.1.25/platform/graphics/cg/ImageSourceCG.cpp
-             Many annoying ads specify a 0 duration to make an image flash as quickly as
-             possible. We follow Safari and Firefox's behavior and use a duration of 100 ms
-             for any frames that specify a duration of <= 10 ms.
-             See <rdar://problem/7689300> and <http://webkit.org/b/36082> for more information.
-             
-             See also: http://nullsleep.tumblr.com/post/16524517190/animated-gif-minimum-frame-delay-browser.
-             */
-            return duration > 0.011 ? duration : defaultGIFFrameDuration
-        } ?? defaultGIFFrameDuration
-        
-        let image = Image(cgImage: imageRef)
-        let scaledImage: Image?
-        
-        if needsPrescaling {
-            scaledImage = image.kf.resize(to: size, for: contentMode)
-        } else {
-            scaledImage = image
+            if frameCount == 1 {
+                gifDuration = .infinity
+            } else {
+                // Get current animated GIF frame duration
+                gifDuration += GIFAnimatedImage.getFrameDuration(from: imageSource, at: i)
+            }
+            images.append(Kingfisher.image(cgImage: imageRef, scale: options.scale, refImage: nil))
+            if options.onlyFirstFrame { break }
         }
-        
-        return AnimatedFrame(image: scaledImage, duration: frameDuration)
+        self.images = images
+        self.duration = gifDuration
     }
     
-    /**
-     Updates the current frame if necessary using the frame timer and the duration of each frame in `animatedFrames`.
-     */
-    func updateCurrentFrame(duration: CFTimeInterval) -> Bool {
-        timeSinceLastFrameChange += min(maxTimeStep, duration)
-        guard let frameDuration = animatedFrames[safe: currentFrameIndexInBuffer]?.duration, frameDuration <= timeSinceLastFrameChange else {
-            return false
-        }
+    // Calculates frame duration for a gif frame out of the kCGImagePropertyGIFDictionary dictionary.
+    static func getFrameDuration(from gifInfo: [String: Any]?) -> TimeInterval {
+        let defaultFrameDuration = 0.1
+        guard let gifInfo = gifInfo else { return defaultFrameDuration }
         
-        timeSinceLastFrameChange -= frameDuration
+        let unclampedDelayTime = gifInfo[kCGImagePropertyGIFUnclampedDelayTime as String] as? NSNumber
+        let delayTime = gifInfo[kCGImagePropertyGIFDelayTime as String] as? NSNumber
+        let duration = unclampedDelayTime ?? delayTime
         
-        let lastFrameIndex = currentFrameIndexInBuffer
-        currentFrameIndexInBuffer += 1
-        currentFrameIndexInBuffer = currentFrameIndexInBuffer % animatedFrames.count
-        
-        if animatedFrames.count < frameCount {
-            preloadFrameAsynchronously(at: lastFrameIndex)
-        }
-        
-        currentFrameIndex += 1
-        
-        if currentFrameIndex == frameCount {
-            currentFrameIndex = 0
-            currentRepeatCount += 1
-
-            delegate?.animator(self, didPlayAnimationLoops: currentRepeatCount)
-        }
-
-        return true
+        guard let frameDuration = duration else { return defaultFrameDuration }
+        return frameDuration.doubleValue > 0.011 ? frameDuration.doubleValue : defaultFrameDuration
     }
-    
-    private func preloadFrameAsynchronously(at index: Int) {
-        preloadQueue.async { [weak self] in
-            self?.preloadFrame(at: index)
-        }
-    }
-    
-    private func preloadFrame(at index: Int) {
-        animatedFrames[index] = prepareFrame(at: currentPreloadIndex)
-        currentPreloadIndex += 1
-        currentPreloadIndex = currentPreloadIndex % frameCount
-    }
-}
 
-extension CGImageSource: KingfisherCompatible { }
-extension Kingfisher where Base: CGImageSource {
-    func gifProperties(at index: Int) -> [String: Double]? {
-        let properties = CGImageSourceCopyPropertiesAtIndex(base, index, nil) as Dictionary?
-        return properties?[kCGImagePropertyGIFDictionary] as? [String: Double]
-    }
-}
+    // Calculates frame duration at a specific index for a gif from an `imageSource`.
+    static func getFrameDuration(from imageSource: CGImageSource, at index: Int) -> TimeInterval {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, index, nil)
+            as? [String: Any] else { return 0.0 }
 
-extension Array {
-    fileprivate subscript(safe index: Int) -> Element? {
-        return indices ~= index ? self[index] : nil
+        let gifInfo = properties[kCGImagePropertyGIFDictionary as String] as? [String: Any]
+        return getFrameDuration(from: gifInfo)
     }
-}
-
-private func pure<T>(_ value: T) -> [T] {
-    return [value]
 }
