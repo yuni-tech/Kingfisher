@@ -48,9 +48,6 @@ Key for array of cleaned hashes in `userInfo` of `KingfisherDidCleanDiskCacheNot
 */
 public let KingfisherDiskCacheCleanedHashKey = "com.onevcat.Kingfisher.cleanedHash"
 
-/// It represents a task of retrieving image. You can call `cancel` on it to stop the process.
-public typealias RetrieveImageDiskTask = DispatchWorkItem
-
 /**
 Cache type of a cached image.
 
@@ -307,14 +304,14 @@ open class ImageCache {
     @discardableResult
     open func retrieveImage(forKey key: String,
                                options: KingfisherOptionsInfo?,
-                     completionHandler: ((Image?, CacheType) -> Void)?) -> RetrieveImageDiskTask?
+                     completionHandler: ((Image?, CacheType) -> Void)?) -> DispatchWorkItem?
     {
         // No completion handler. Not start working and early return.
         guard let completionHandler = completionHandler else {
             return nil
         }
         
-        var block: RetrieveImageDiskTask?
+        var block: DispatchWorkItem?
         let options = options ?? KingfisherEmptyOptionsInfo
         let imageModifier = options.imageModifier
 
