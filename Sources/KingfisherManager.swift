@@ -46,17 +46,12 @@ public final class RetrieveImageTask {
     /// The network retrieve task in this image task.
     public var downloadTask: RetrieveImageDownloadTask?
     
-    /// The disk retrieve task in this image task.
-    public var diskTask: RetrieveImageDiskTask?
-    
     /**
     Cancel current task. If this task is already done, do nothing.
     */
     public func cancel() {
         if let downloadTask = self.downloadTask {
             downloadTask.cancel()
-        } else if let diskTask = self.diskTask {
-            diskTask.cancel()
         } else {
             cancelledBeforeDownloadStarting = true
         }
@@ -264,7 +259,7 @@ public class KingfisherManager {
         let targetCache = options.targetCache ?? self.cache
         let processQueue = self.processQueue
         // First, try to get the exactly image from cache
-        retrieveImageTask.diskTask = targetCache.retrieveImage(forKey: key, options: options) { image, cacheType in
+        targetCache.retrieveImage(forKey: key, options: options) { image, cacheType in
             // If found, we could finish now.
             if image != nil {
                 diskTaskCompletionHandler(image, nil, cacheType, url)
