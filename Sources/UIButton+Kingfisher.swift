@@ -61,7 +61,7 @@ extension Kingfisher where Base: UIButton {
         guard let resource = resource else {
             base.setImage(placeholder, for: state)
             setWebURL(nil, for: state)
-            completionHandler?(nil, nil, .none, nil)
+            completionHandler?(nil, nil, .none, nil, nil)
             return .empty
         }
         
@@ -82,10 +82,10 @@ extension Kingfisher where Base: UIButton {
                     progressBlock(receivedSize, totalSize)
                 }
             },
-            completionHandler: {[weak base] image, error, cacheType, imageURL in
+            completionHandler: {[weak base] image, error, cacheType, imageURL, response in
                 DispatchQueue.main.safeAsync {
                     guard let strongBase = base, imageURL == self.webURL(for: state) else {
-                        completionHandler?(image, error, cacheType, imageURL)
+                        completionHandler?(image, error, cacheType, imageURL, response)
                         return
                     }
                     self.setImageTask(nil)
@@ -93,7 +93,7 @@ extension Kingfisher where Base: UIButton {
                         strongBase.setImage(image, for: state)
                     }
 
-                    completionHandler?(image, error, cacheType, imageURL)
+                    completionHandler?(image, error, cacheType, imageURL, response)
                 }
             })
         
@@ -139,7 +139,7 @@ extension Kingfisher where Base: UIButton {
         guard let resource = resource else {
             base.setBackgroundImage(placeholder, for: state)
             setBackgroundWebURL(nil, for: state)
-            completionHandler?(nil, nil, .none, nil)
+            completionHandler?(nil, nil, .none, nil, nil)
             return .empty
         }
         
@@ -160,17 +160,17 @@ extension Kingfisher where Base: UIButton {
                     progressBlock(receivedSize, totalSize)
                 }
             },
-            completionHandler: { [weak base] image, error, cacheType, imageURL in
+            completionHandler: { [weak base] image, error, cacheType, imageURL, response in
                 DispatchQueue.main.safeAsync {
                     guard let strongBase = base, imageURL == self.backgroundWebURL(for: state) else {
-                        completionHandler?(image, error, cacheType, imageURL)
+                        completionHandler?(image, error, cacheType, imageURL, response)
                         return
                     }
                     self.setBackgroundImageTask(nil)
                     if image != nil {
                         strongBase.setBackgroundImage(image, for: state)
                     }
-                    completionHandler?(image, error, cacheType, imageURL)
+                    completionHandler?(image, error, cacheType, imageURL, response)
                 }
             })
         
