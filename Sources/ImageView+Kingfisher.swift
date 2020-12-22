@@ -63,7 +63,7 @@ extension Kingfisher where Base: ImageView {
         guard let resource = resource else {
             self.placeholder = placeholder
             setWebURL(nil)
-            completionHandler?(nil, nil, .none, nil)
+            completionHandler?(nil, nil, .none, nil, nil)
             return .empty
         }
         
@@ -94,17 +94,17 @@ extension Kingfisher where Base: ImageView {
                     progressBlock(receivedSize, totalSize)
                 }
             },
-            completionHandler: {[weak base] image, error, cacheType, imageURL in
+            completionHandler: {[weak base] image, error, cacheType, imageURL, response in
                 DispatchQueue.main.safeAsync {
                     maybeIndicator?.stopAnimatingView()
                     guard let strongBase = base, imageURL == self.webURL else {
-                        completionHandler?(image, error, cacheType, imageURL)
+                        completionHandler?(image, error, cacheType, imageURL, response)
                         return
                     }
                     
                     self.setImageTask(nil)
                     guard let image = image else {
-                        completionHandler?(nil, error, cacheType, imageURL)
+                        completionHandler?(nil, error, cacheType, imageURL, response)
                         return
                     }
                     
@@ -113,7 +113,7 @@ extension Kingfisher where Base: ImageView {
                     {
                         self.placeholder = nil
                         strongBase.image = image
-                        completionHandler?(image, error, cacheType, imageURL)
+                        completionHandler?(image, error, cacheType, imageURL, response)
                         return
                     }
                     
@@ -131,7 +131,7 @@ extension Kingfisher where Base: ImageView {
                                                               },
                                                               completion: { finished in
                                                                 transition.completion?(finished)
-                                                                completionHandler?(image, error, cacheType, imageURL)
+                                                                completionHandler?(image, error, cacheType, imageURL, response)
                                                               })
                                           })
                     #endif

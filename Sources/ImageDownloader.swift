@@ -34,7 +34,7 @@ import UIKit
 public typealias ImageDownloaderProgressBlock = DownloadProgressBlock
 
 /// Completion block of downloader.
-public typealias ImageDownloaderCompletionHandler = ((_ image: Image?, _ error: NSError?, _ url: URL?, _ originalData: Data?) -> Void)
+public typealias ImageDownloaderCompletionHandler = ((_ image: Image?, _ error: NSError?, _ url: URL?, _ originalData: Data?, _ response: URLResponse?) -> Void)
 
 /// Download task.
 public struct RetrieveImageDownloadTask {
@@ -330,7 +330,7 @@ open class ImageDownloader {
                        completionHandler: ImageDownloaderCompletionHandler? = nil) -> RetrieveImageDownloadTask?
     {
         if let retrieveImageTask = retrieveImageTask, retrieveImageTask.cancelledBeforeDownloadStarting {
-            completionHandler?(nil, NSError(domain: KingfisherErrorDomain, code: KingfisherError.downloadCancelledBeforeStarting.rawValue, userInfo: nil), nil, nil)
+            completionHandler?(nil, NSError(domain: KingfisherErrorDomain, code: KingfisherError.downloadCancelledBeforeStarting.rawValue, userInfo: nil), nil, nil, nil)
             return nil
         }
         
@@ -338,7 +338,7 @@ open class ImageDownloader {
         if let valid = options?.expired {
             let result = valid.valid(for: url)
             guard !result.expired else {
-                completionHandler?(result.image, NSError(domain: KingfisherErrorDomain, code: KingfisherError.downloadCancelledBeforeStarting.rawValue, userInfo: nil), url, nil)
+                completionHandler?(result.image, NSError(domain: KingfisherErrorDomain, code: KingfisherError.downloadCancelledBeforeStarting.rawValue, userInfo: nil), url, nil, nil)
                 return nil
             }
         }
@@ -351,7 +351,7 @@ open class ImageDownloader {
 
         if let modifier = options?.modifier {
             guard let r = modifier.modified(for: request) else {
-                completionHandler?(nil, NSError(domain: KingfisherErrorDomain, code: KingfisherError.downloadCancelledBeforeStarting.rawValue, userInfo: nil), nil, nil)
+                completionHandler?(nil, NSError(domain: KingfisherErrorDomain, code: KingfisherError.downloadCancelledBeforeStarting.rawValue, userInfo: nil), nil, nil, nil)
                 return nil
             }
             request = r
@@ -359,7 +359,7 @@ open class ImageDownloader {
         
         // There is a possibility that request modifier changed the url to `nil` or empty.
         guard let url = request.url, !url.absoluteString.isEmpty else {
-            completionHandler?(nil, NSError(domain: KingfisherErrorDomain, code: KingfisherError.invalidURL.rawValue, userInfo: nil), nil, nil)
+            completionHandler?(nil, NSError(domain: KingfisherErrorDomain, code: KingfisherError.invalidURL.rawValue, userInfo: nil), nil, nil, nil)
             return nil
         }
         
@@ -605,7 +605,7 @@ final class ImageDownloaderSessionHandler: NSObject, URLSessionDataDelegate, Aut
         
         for content in fetchLoad.contents {
             content.options.callbackDispatchQueue.safeAsync {
-                content.callback.completionHandler?(nil, error as NSError, url, nil)
+                content.callback.completionHandler?(nil, error as NSError, url, nil, nil)
             }
         }
     }
@@ -652,29 +652,30 @@ final class ImageDownloaderSessionHandler: NSObject, URLSessionDataDelegate, Aut
                     imageCache[processor.identifier] = image
                 }
                 
+                let response = task.response
                 if let image = image {
 
-                    downloader.delegate?.imageDownloader(downloader, didDownload: image, for: url, with: task.response)
+                    downloader.delegate?.imageDownloader(downloader, didDownload: image, for: url, with: response)
 
                     let imageModifier = options.imageModifier
                     let finalImage = imageModifier.modify(image)
 
                     if options.backgroundDecode {
                         let decodedImage = finalImage.kf.decoded
-                        callbackQueue.safeAsync { completionHandler?(decodedImage, nil, url, data) }
+                        callbackQueue.safeAsync { completionHandler?(decodedImage, nil, url, data, response) }
                     } else {
-                        callbackQueue.safeAsync { completionHandler?(finalImage, nil, url, data) }
+                        callbackQueue.safeAsync { completionHandler?(finalImage, nil, url, data, response) }
                     }
                     
                 } else {
                     if let res = task.response as? HTTPURLResponse , res.statusCode == 304 {
                         let notModified = NSError(domain: KingfisherErrorDomain, code: KingfisherError.notModified.rawValue, userInfo: nil)
-                        completionHandler?(nil, notModified, url, nil)
+                        completionHandler?(nil, notModified, url, nil, nil)
                         continue
                     }
                     
                     let badData = NSError(domain: KingfisherErrorDomain, code: KingfisherError.badData.rawValue, userInfo: nil)
-                    callbackQueue.safeAsync { completionHandler?(nil, badData, url, nil) }
+                    callbackQueue.safeAsync { completionHandler?(nil, badData, url, nil, nil) }
                 }
             }
         }

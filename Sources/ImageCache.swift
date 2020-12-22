@@ -189,6 +189,7 @@ open class ImageCache {
                                    Kingfisher will use it to check the format of the image and optimize cache size on disk.
                                    If `nil` is supplied, the image data will be saved as a normalized PNG file.
                                    It is strongly suggested to supply it whenever possible, to get a better performance and disk usage.
+    - parameter response:          The http response result.
     - parameter key:               Key for the image.
     - parameter identifier:        The identifier of processor used. If you are using a processor for the image, pass the identifier of
                                    processor to it.
@@ -200,6 +201,7 @@ open class ImageCache {
                       blurImage: Image? = nil,
                       blurRadius: CGFloat? = nil,
                       original: Data? = nil,
+                      response: URLResponse? = nil,
                       forKey key: String,
                       processorIdentifier identifier: String = "",
                       cacheSerializer serializer: CacheSerializer = DefaultCacheSerializer.default,

@@ -31,7 +31,7 @@ import UIKit
 #endif
 
 public typealias DownloadProgressBlock = ((_ receivedSize: Int64, _ totalSize: Int64) -> Void)
-public typealias CompletionHandler = ((_ image: Image?, _ error: NSError?, _ cacheType: CacheType, _ imageURL: URL?) -> Void)
+public typealias CompletionHandler = ((_ image: Image?, _ error: NSError?, _ cacheType: CacheType, _ imageURL: URL?, _ response: URLResponse?) -> Void)
 
 /// RetrieveImageTask represents a task of image retrieving process.
 /// It contains an async task of getting image from disk and from network.
@@ -157,10 +157,10 @@ public class KingfisherManager {
             progressBlock: { receivedSize, totalSize in
                 progressBlock?(receivedSize, totalSize)
             },
-            completionHandler: { image, error, imageURL, originalData in
+            completionHandler: { image, error, imageURL, originalData, response in
 
-                let diskTaskCompletionHandler: CompletionHandler = { (image, error, cacheType, imageURL) -> Void in
-                    completionHandler?(image, error, cacheType, imageURL)
+                let diskTaskCompletionHandler: CompletionHandler = { (image, error, cacheType, imageURL, response) -> Void in
+                    completionHandler?(image, error, cacheType, imageURL, response)
                 }
                 
                 processQueue.async {
@@ -175,7 +175,7 @@ public class KingfisherManager {
                         // Not modified. Try to find the image from cache.
                         // (The image should be in cache. It should be guaranteed by the framework users.)
                         targetCache.retrieveImage(forKey: key, options: options, completionHandler: { (cacheImage, cacheType) -> Void in
-                            diskTaskCompletionHandler(cacheImage, nil, cacheType, url)
+                            diskTaskCompletionHandler(cacheImage, nil, cacheType, url, response)
                         })
                         return
                     }
@@ -185,6 +185,7 @@ public class KingfisherManager {
                                           blurImage: blurImage,
                                           blurRadius: options.blurryRadius,
                                           original: originalData,
+                                          response: response,
                                           forKey: key,
                                           processorIdentifier:options.processor.identifier,
                                           cacheSerializer: options.cacheSerializer,
@@ -195,7 +196,7 @@ public class KingfisherManager {
                                             let cacheType = targetCache.imageCachedType(forKey: key, processorIdentifier: options.processor.identifier)
                                             let callbackImage = blurImage ?? image
                                             options.callbackDispatchQueue.safeAsync {
-                                                diskTaskCompletionHandler(callbackImage, nil, cacheType, url)
+                                                diskTaskCompletionHandler(callbackImage, nil, cacheType, url, response)
                                             }
                         })
                         
@@ -208,6 +209,7 @@ public class KingfisherManager {
                                                         blurImage: nil,
                                                         blurRadius: nil,
                                                         original: originalData,
+                                                        response: response,
                                                         forKey: key,
                                                         processorIdentifier: defaultProcessor.identifier,
                                                         cacheSerializer: options.cacheSerializer,
@@ -221,7 +223,7 @@ public class KingfisherManager {
                     if options.waitForCache == false || image == nil {
                         let callbackImage = blurImage ?? image
                         options.callbackDispatchQueue.safeAsync {
-                            diskTaskCompletionHandler(callbackImage, error, .none, url)
+                            diskTaskCompletionHandler(callbackImage, error, .none, url, response)
                         }
                     }
                 }
@@ -236,14 +238,14 @@ public class KingfisherManager {
                                         options: KingfisherOptionsInfo)
     {
 
-        let diskTaskCompletionHandler: CompletionHandler = { (image, error, cacheType, imageURL) -> Void in
-            completionHandler?(image, error, cacheType, imageURL)
+        let diskTaskCompletionHandler: CompletionHandler = { (image, error, cacheType, imageURL, response) -> Void in
+            completionHandler?(image, error, cacheType, imageURL, response)
         }
         
         func handleNoCache() {
             if options.onlyFromCache {
                 let error = NSError(domain: KingfisherErrorDomain, code: KingfisherError.notCached.rawValue, userInfo: nil)
-                diskTaskCompletionHandler(nil, error, .none, url)
+                diskTaskCompletionHandler(nil, error, .none, url, nil)
                 return
             }
             self.downloadAndCacheImage(
@@ -262,7 +264,7 @@ public class KingfisherManager {
         targetCache.retrieveImage(forKey: key, options: options) { image, cacheType in
             // If found, we could finish now.
             if image != nil {
-                diskTaskCompletionHandler(image, nil, cacheType, url)
+                diskTaskCompletionHandler(image, nil, cacheType, url, nil)
                 return
             }
             
@@ -288,7 +290,7 @@ public class KingfisherManager {
                 processQueue.async {
                     guard let processedImage = processor.process(item: .image(image), options: options) else {
                         options.callbackDispatchQueue.safeAsync {
-                            diskTaskCompletionHandler(nil, nil, .none, url)
+                            diskTaskCompletionHandler(nil, nil, .none, url, nil)
                         }
                         return
                     }
@@ -310,14 +312,14 @@ public class KingfisherManager {
 
                                         let cacheType = targetCache.imageCachedType(forKey: key, processorIdentifier: options.processor.identifier)
                                         options.callbackDispatchQueue.safeAsync {
-                                            diskTaskCompletionHandler(processedImage, nil, cacheType, url)
+                                            diskTaskCompletionHandler(processedImage, nil, cacheType, url, nil)
                                         }
                     })
 
                     if options.waitForCache == false {
                         let callbackImage = blurImage ?? processedImage
                         options.callbackDispatchQueue.safeAsync {
-                            diskTaskCompletionHandler(callbackImage, nil, .none, url)
+                            diskTaskCompletionHandler(callbackImage, nil, .none, url, nil)
                         }
                     }
                 }
