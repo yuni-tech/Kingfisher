@@ -149,13 +149,15 @@ public protocol ImageDownloaderDelegate: AnyObject {
      - parameter downloader: The `ImageDownloader` object finishes data downloading.
      - parameter data:       Downloaded data.
      - parameter url:        URL of the original request URL.
+     - parameter response:   The download image data response.
+     - parameter handler:    Called when dispose image data complete.
      
      - returns: The data from which Kingfisher should use to create an image.
      
      - Note: This callback can be used to preprocess raw image data
              before creation of UIImage instance (i.e. decrypting or verification).
      */
-    func imageDownloader(_ downloader: ImageDownloader, didDownload data: Data, for url: URL) -> Data?
+    func imageDownloader(_ downloader: ImageDownloader, didDownload data: Data, for url: URL, with response: URLResponse?, completionHandler handler: ((_ error: Error?, _ data: Data?) -> Void)?) -> Void
 }
 
 extension ImageDownloaderDelegate {
@@ -169,8 +171,9 @@ extension ImageDownloaderDelegate {
     public func isValidStatusCode(_ code: Int, for downloader: ImageDownloader) -> Bool {
         return (200..<400).contains(code)
     }
-    public func imageDownloader(_ downloader: ImageDownloader, didDownload data: Data, for url: URL) -> Data? {
-        return data
+    
+    public func imageDownloader(_ downloader: ImageDownloader, didDownload data: Data, for url: URL, with response: URLResponse?, completionHandler handler: ((_ error: Error?, _ data: Data?) -> Void)?) {
+        handler?(nil, data)
     }
 }
 
@@ -625,57 +628,64 @@ final class ImageDownloaderSessionHandler: NSObject, URLSessionDataDelegate, Aut
             
             self.cleanFetchLoad(for: url)
             
-            let data: Data?
             let fetchedData = fetchLoad.responseData as Data
-            
-            if let delegate = downloader.delegate {
-                data = delegate.imageDownloader(downloader, didDownload: fetchedData, for: url)
-            } else {
-                data = fetchedData
-            }
-            
-            // Cache the processed images. So we do not need to re-process the image if using the same processor.
-            // Key is the identifier of processor.
-            var imageCache: [String: Image] = [:]
-            for content in fetchLoad.contents {
+            downloader.delegate?.imageDownloader(downloader, didDownload: fetchedData, for: url, with: task.response) { error, data in
                 
-                let options = content.options
-                let completionHandler = content.callback.completionHandler
-                let callbackQueue = options.callbackDispatchQueue
-                
-                let processor = options.processor
-                var image = imageCache[processor.identifier]
-                if let data = data, image == nil {
-                    image = processor.process(item: .data(data), options: options)
-                    // Add the processed image to cache. 
-                    // If `image` is nil, nothing will happen (since the key is not existing before).
-                    imageCache[processor.identifier] = image
+                // occure error when dispose data.
+                if let err = error {
+                    fetchLoad.contents.forEach {
+                        let options = $0.options
+                        let completionHandler = $0.callback.completionHandler
+                        let callbackQueue = options.callbackDispatchQueue
+                        
+                        callbackQueue.safeAsync { completionHandler?(nil, err as NSError, url, nil, nil) }
+                    }
+                    return
                 }
                 
-                let response = task.response
-                if let image = image {
+                // Cache the processed images. So we do not need to re-process the image if using the same processor.
+                // Key is the identifier of processor.
+                var imageCache: [String: Image] = [:]
+                for content in fetchLoad.contents {
+                    
+                    let options = content.options
+                    let completionHandler = content.callback.completionHandler
+                    let callbackQueue = options.callbackDispatchQueue
+                    
+                    let processor = options.processor
+                    var image = imageCache[processor.identifier]
+                    if let data = data, image == nil {
+                        image = processor.process(item: .data(data), options: options)
+                        // Add the processed image to cache.
+                        // If `image` is nil, nothing will happen (since the key is not existing before).
+                        imageCache[processor.identifier] = image
+                    }
+                    
+                    let response = task.response
+                    if let image = image {
 
-                    downloader.delegate?.imageDownloader(downloader, didDownload: image, for: url, with: response)
+                        downloader.delegate?.imageDownloader(downloader, didDownload: image, for: url, with: response)
 
-                    let imageModifier = options.imageModifier
-                    let finalImage = imageModifier.modify(image)
+                        let imageModifier = options.imageModifier
+                        let finalImage = imageModifier.modify(image)
 
-                    if options.backgroundDecode {
-                        let decodedImage = finalImage.kf.decoded
-                        callbackQueue.safeAsync { completionHandler?(decodedImage, nil, url, data, response) }
+                        if options.backgroundDecode {
+                            let decodedImage = finalImage.kf.decoded
+                            callbackQueue.safeAsync { completionHandler?(decodedImage, nil, url, data, response) }
+                        } else {
+                            callbackQueue.safeAsync { completionHandler?(finalImage, nil, url, data, response) }
+                        }
+                        
                     } else {
-                        callbackQueue.safeAsync { completionHandler?(finalImage, nil, url, data, response) }
+                        if let res = task.response as? HTTPURLResponse , res.statusCode == 304 {
+                            let notModified = NSError(domain: KingfisherErrorDomain, code: KingfisherError.notModified.rawValue, userInfo: nil)
+                            completionHandler?(nil, notModified, url, nil, nil)
+                            continue
+                        }
+                        
+                        let badData = NSError(domain: KingfisherErrorDomain, code: KingfisherError.badData.rawValue, userInfo: nil)
+                        callbackQueue.safeAsync { completionHandler?(nil, badData, url, nil, nil) }
                     }
-                    
-                } else {
-                    if let res = task.response as? HTTPURLResponse , res.statusCode == 304 {
-                        let notModified = NSError(domain: KingfisherErrorDomain, code: KingfisherError.notModified.rawValue, userInfo: nil)
-                        completionHandler?(nil, notModified, url, nil, nil)
-                        continue
-                    }
-                    
-                    let badData = NSError(domain: KingfisherErrorDomain, code: KingfisherError.badData.rawValue, userInfo: nil)
-                    callbackQueue.safeAsync { completionHandler?(nil, badData, url, nil, nil) }
                 }
             }
         }
